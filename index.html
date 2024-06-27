@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Idea Space</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            height: 100%;
+            font-family: Arial, sans-serif;
+        }
+
+        #overlay {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+        }
+
+        #ideaInput {
+            padding: 10px;
+            font-size: 16px;
+        }
+
+        #enterButton {
+            margin-left: 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="overlay">
+        <input type="text" id="ideaInput" placeholder="Type your idea here...">
+        <button id="enterButton">Enter</button>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three/examples/jsm/webxr/WebXRButton.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three/examples/jsm/webxr/XRControllerModelFactory.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three/examples/jsm/webxr/XRHandModelFactory.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three/examples/fonts/helvetiker_regular.typeface.json"></script>
+    <script>
+        let scene, camera, renderer, font;
+        let controller1, controller2;
+        let hand1, hand2;
+        let xrSession;
+        let xrImmersiveRefSpace = null;
+        let ideas = [];
+        let selectedObject = null;
+        let initialDistance = 0;
+
+        init();
+        animate();
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            const xrButton = new WebXRButton(renderer, {
+                onSessionStart: onSessionStart,
+                onSessionEnd: onSessionEnd,
+            });
+            document.body.appendChild(xrButton.domElement);
+
+            // Load the font
+            const loader = new THREE.FontLoader();
+            loader.load('https://cdn.jsdelivr.net/npm/three/examples/fonts/helvetiker_regular.typeface.json', function (loadedFont) {
+                font = loadedFont;
+                // Initialize event listeners only after font is loaded
+                document.getElementById('enterButton').addEventListener('click', () => {
+                    let ideaText = document.getElementById('ideaInput').value;
+                    if (ideaText.trim() !== "") {
+                        createIdea(ideaText);
+                        document.getElementById('ideaInput').value = '';
+                    }
+                });
+                // Load previous ideas
+                loadIdeas();
+            });
+
+            // Controllers
+            controller1 = renderer.xr.getController(0);
+            controller1.addEventListener('selectstart', onSelectStart);
+            controller1.addEventListener('selectend', onSelectEnd);
+            controller1.addEventListener('squeezestart', onSqueezeStart);
+            controller1.addEventListener('squeezeend', onSqueezeEnd);
+            scene.add(controller1);
+
+            controller2 = renderer.xr.getController(1);
+            controller2.addEventListener('selectstart', onSelectStart);
+            controller2.addEventListener('selectend', onSelectEnd);
+            controller2.addEventListener('squeezestart', onSqueezeStart);
+            controller2.addEventListener('squeezeend', onSqueezeEnd);
+            scene.add(controller2);
+
+            const controllerModelFactory = new XRControllerModelFactory();
+            const handModelFactory = new XRHandModelFactory();
+
+            hand1 = renderer.xr.getHand(0);
+            hand1.add(handModelFactory.createHandModel(hand1));
+            scene.add(hand1);
+
+            hand2 = renderer.xr.getHand(1);
+            hand2.add(handModelFactory.createHandModel(hand2));
+            scene.add(hand2);
+        }
+
+        function createIdea(text) {
+            const geometry = new THREE.TextGeometry(text, {
+                font: font,
+                size: 0.5,
+                height: 0.1,
+            });
+
+            const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(Math.random() * 4 - 2, Math.random() * 4 - 2, -5);
+            mesh.userData.originalScale = mesh.scale.clone();
+            scene.add(mesh);
+            ideas.push(mesh);
+            saveIdeas();
+        }
+
+        function onSessionStart(session) {
+            xrSession = session;
+            xrSession.addEventListener('end', onSessionEnd);
+
+            renderer.xr.setReferenceSpaceType('local');
+            renderer.xr.setSession(xrSession);
+        }
+
+        function onSessionEnd() {
+            xrSession.removeEventListener('end', onSessionEnd);
+            xrSession = null;
+        }
+
+        function animate() {
+            renderer.setAnimationLoop(render);
+        }
+
+        function render() {
+            if (selectedObject) {
+                const distance = controller1.position.distanceTo(controller2.position);
+
+                if (initialDistance > 0) {
+                    const scale = distance / initialDistance;
+                    selectedObject.scale.set(
+                        selectedObject.userData.originalScale.x * scale,
+                        selectedObject.userData.originalScale.y * scale,
+                        selectedObject.userData.originalScale.z * scale
+                    );
+                }
+            }
+            renderer.render(scene, camera);
+        }
+
+        function saveIdeas() {
+            const ideasData = ideas.map(mesh => ({
+                text: mesh.geometry.parameters.text,
+                position: mesh.position.toArray(),
+                scale: mesh.scale.toArray()
+            }));
+            localStorage.setItem('ideas', JSON.stringify(ideasData));
+        }
+
+        function loadIdeas() {
+            const savedIdeas = JSON.parse(localStorage.getItem('ideas'));
+            if (savedIdeas) {
+                savedIdeas.forEach(idea => {
+                    createIdea(idea.text);
+                    const lastIdea = ideas[ideas.length - 1];
+                    lastIdea.position.fromArray(idea.position);
+                    lastIdea.scale.fromArray(idea.scale);
+                    lastIdea.userData.originalScale = lastIdea.scale.clone();
+                });
+            }
+        }
+
+        function onSelectStart(event) {
+            const controller = event.target;
+            const intersections = getIntersections(controller);
+
+            if (intersections.length > 0) {
+                selectedObject = intersections[0].object;
+                controller.attach(selectedObject);
+            }
+        }
+
+        function onSelectEnd(event) {
+            if (selectedObject) {
+                const controller = event.target;
+                scene.attach(selectedObject);
+                selectedObject = null;
+                initialDistance = 0;
+            }
+        }
+
+        function onSqueezeStart(event) {
+            initialDistance = controller1.position.distanceTo(controller2.position);
+        }
+
+        function onSqueezeEnd(event) {
+            initialDistance = 0;
+        }
+
+        function getIntersections(controller) {
+            const tempMatrix = new THREE.Matrix4();
+            tempMatrix.identity().extractRotation(controller.matrixWorld);
+
+            const raycaster = new THREE.Raycaster();
+            raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+            raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+
+            return raycaster.intersectObjects(ideas);
+        }
+
+        // Start the XR application.
+        if (navigator.xr) {
+            navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+                if (supported) {
+                    const xrButton = new WebXRButton(renderer, {
+                        onSessionStart: onSessionStart,
+                        onSessionEnd: onSessionEnd,
+                    });
+                    document.body.appendChild(xrButton.domElement);
+                }
+            });
+        }
+    </script>
+</body>
+</html>
