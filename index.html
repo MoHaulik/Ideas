@@ -52,15 +52,13 @@
         let controller1, controller2;
         let hand1, hand2;
         let xrSession;
-        let xrImmersiveRefSpace = null;
+        let xrRefSpace;
         let ideas = [];
         let selectedObject = null;
         let initialDistance = 0;
 
-        init();
-        animate();
-
         function init() {
+            // Scene setup
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
 
@@ -69,12 +67,6 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
-
-            const xrButton = new WebXRButton(renderer, {
-                onSessionStart: onSessionStart,
-                onSessionEnd: onSessionEnd,
-            });
-            document.body.appendChild(xrButton.domElement);
 
             // Load the font
             const loader = new THREE.FontLoader();
@@ -117,6 +109,22 @@
             hand2 = renderer.xr.getHand(1);
             hand2.add(handModelFactory.createHandModel(hand2));
             scene.add(hand2);
+
+            // WebXR button
+            const xrButton = new WebXRButton(renderer, {
+                onSessionStart: onSessionStart,
+                onSessionEnd: onSessionEnd,
+            });
+            document.body.appendChild(xrButton.domElement);
+
+            // Start the XR application
+            if (navigator.xr) {
+                navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+                    if (supported) {
+                        xrButton.enabled = true;
+                    }
+                });
+            }
         }
 
         function createIdea(text) {
@@ -141,6 +149,11 @@
 
             renderer.xr.setReferenceSpaceType('local');
             renderer.xr.setSession(xrSession);
+
+            session.requestReferenceSpace('local').then((refSpace) => {
+                xrRefSpace = refSpace;
+                session.requestAnimationFrame(onXRFrame);
+            });
         }
 
         function onSessionEnd() {
@@ -228,18 +241,25 @@
             return raycaster.intersectObjects(ideas);
         }
 
-        // Start the XR application.
-        if (navigator.xr) {
-            navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
-                if (supported) {
-                    const xrButton = new WebXRButton(renderer, {
-                        onSessionStart: onSessionStart,
-                        onSessionEnd: onSessionEnd,
-                    });
-                    document.body.appendChild(xrButton.domElement);
-                }
-            });
+        function onXRFrame(time, frame) {
+            const session = frame.session;
+            session.requestAnimationFrame(onXRFrame);
+
+            const viewerPose = frame.getViewerPose(xrRefSpace);
+            if (viewerPose) {
+                const view = viewerPose.views[0];
+                const viewport = session.renderState.baseLayer.getViewport(view);
+                renderer.setSize(viewport.width, viewport.height);
+
+                camera.matrix.fromArray(view.transform.matrix);
+                camera.projectionMatrix.fromArray(view.projectionMatrix);
+                camera.updateMatrixWorld(true);
+            }
+
+            render();
         }
+
+        init();
     </script>
 </body>
 </html>
